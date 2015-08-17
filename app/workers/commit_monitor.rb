@@ -36,7 +36,10 @@ class CommitMonitor
     if !first_unique_worker?
       logger.info "#{self.class} is already running, skipping"
     else
-      process_branches
+      report = MemoryProfiler.report { process_branches }
+      logger.warn("========== COMMIT MONITOR START ==========")
+      logger.warn(report.pretty_print)
+      logger.warn("========== COMMIT MONITOR END ==========")
     end
   end
 

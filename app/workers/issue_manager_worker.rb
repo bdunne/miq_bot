@@ -17,9 +17,15 @@ class IssueManagerWorker
       return
     end
 
-    CommitMonitorRepo.where(:name => repo_names).each do |repo|
-      process_notifications(repo)
+    report = MemoryProfiler.report do
+      CommitMonitorRepo.where(:name => repo_names).each do |repo|
+        process_notifications(repo)
+      end
     end
+
+    logger.warn("========== ISSUE MANAGER START ==========")
+    logger.warn(report.pretty_print)
+    logger.warn("========== ISSUE MANAGER END ==========")
   end
 
   private

@@ -10,10 +10,15 @@ class PullRequestMonitor
     if !first_unique_worker?
       logger.info "#{self.class} is already running, skipping"
     else
-      CommitMonitorRepo.includes(:branches).each do |repo|
-        next unless repo.upstream_user
-        RepoProcessor.process(repo)
+      report = MemoryProfiler.report do
+        CommitMonitorRepo.includes(:branches).each do |repo|
+          next unless repo.upstream_user
+          RepoProcessor.process(repo)
+        end
       end
+      logger.warn("========== COMMIT MONITOR START ==========")
+      logger.warn(report.pretty_print)
+      logger.warn("========== COMMIT MONITOR END ==========")
     end
   end
 end
