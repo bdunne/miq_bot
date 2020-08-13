@@ -1,0 +1,30 @@
+#!/bin/bash
+
+export RAILS_ENV=production
+export PATH=/opt/miq_bot:$PATH
+pushd /opt/miq_bot/config
+  ln -s /opt/miq_bot_config/settings.local.yml
+  ln -s /opt/miq_bot_data/github_notification_monitor.yml
+popd
+pushd /opt/miq_bot/config/initializers
+  ln -s /opt/miq_bot_config/01_sidekiq_config.rb
+popd
+
+function urlescape() {
+  PAYLOAD="$1" ruby -rcgi -e "puts CGI.escape(ENV['PAYLOAD'])"
+}
+
+safeuser=$(urlescape ${DATABASE_USER})
+safepass=$(urlescape ${DATABASE_PASSWORD})
+
+export DATABASE_URL="postgresql://${safeuser}:${safepass}@${DATABASE_HOSTNAME}:${DATABASE_PORT}/${DATABASE_NAME}?encoding=utf8&pool=5&wait_timeout=5"
+
+[[ -n $QUEUE_NAME ]] && COMMAND="sidekiq -q $QUEUE_NAME"
+[[ -z $COMMAND ]] && COMMAND="rails server"
+
+cd /opt/miq_bot
+
+bundle exec rake db:create
+bundle exec rake db:migrate
+
+exec bundle exec ${COMMAND}
