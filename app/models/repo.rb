@@ -173,6 +173,7 @@ class Repo < ActiveRecord::Base
   end
 
   def git_service
+    git_fetch
     GitService::Repo.new(self)
   end
 
