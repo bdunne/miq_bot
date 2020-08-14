@@ -26,7 +26,7 @@ RUN dnf -y --disableplugin=subscription-manager install \
     dnf -y --disableplugin=subscription-manager upgrade && \
     dnf clean all
 
-RUN wget https://github.com/ManageIQ/miq_bot/archive/$REF.zip && \
+RUN wget https://github.com/bdunne/miq_bot/archive/$REF.zip && \
     unzip $REF.zip -d /opt && \
     rm -rf $REF.zip && \
     mv /opt/miq_bot-* $APP_ROOT && \

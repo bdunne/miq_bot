@@ -2,6 +2,11 @@
 
 export RAILS_ENV=production
 export PATH=/opt/miq_bot:$PATH
+
+mkdir /root/.ssh
+cp /root/ssh/* /root/.ssh/
+chown 600 /root/.ssh/miq-bot
+
 pushd /opt/miq_bot/config
   ln -s /opt/miq_bot_config/settings.local.yml
   ln -s /opt/miq_bot_data/github_notification_monitor.yml
