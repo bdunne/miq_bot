@@ -1,22 +1,16 @@
 source 'https://rubygems.org'
 
 # Bundle edge Rails instead: gem 'rails', github: 'rails/rails'
-gem 'rails', '4.0.2'
+gem 'rails', '~> 5.2.2'
 
 # Use PostgreSQL as the database for Active Record
 gem 'pg'
 
+# InfluxDB for Github rate limit tracking
+gem 'influxdb', '~>0.3.13'
+
 # Use SCSS for stylesheets
-gem 'sass-rails', '~> 4.0.0'
-
-# Use Uglifier as compressor for JavaScript assets
-gem 'uglifier', '>= 1.3.0'
-
-# Use CoffeeScript for .js.coffee assets and views
-gem 'coffee-rails', '~> 4.0.0'
-
-# See https://github.com/sstephenson/execjs#readme for more supported runtimes
-gem 'therubyracer', platforms: :ruby
+gem 'sass-rails', '~> 5.0.7'
 
 # Use jquery as the JavaScript library
 gem 'jquery-rails'
@@ -27,22 +21,32 @@ gem 'turbolinks'
 gem 'thin'
 gem 'foreman', '~> 0.64.0' # v0.65.0 breaks support for the older upstart on RHEL 6
 
-gem 'rails_config', '0.5.0.beta1'
+gem 'config'
+gem 'listen'
 
 # Sidekiq specific gems
-gem 'sidekiq', '~> 2.17'
-gem 'sidetiq'
-gem 'sinatra', require: false
+gem 'sidekiq', '~> 5.2.5'
+gem 'sidetiq', '~> 0.7.0'
+gem 'sinatra', :require => false
 gem 'slim'
 
-gem 'miq_tools_services', :git => "git://github.com/ManageIQ/miq_tools_services.git", :branch => "master"
-gem 'travis', '~>1.7.6'
+# Services gems
+gem 'minigit',        '~> 0.0.4'
+gem 'net-ssh',        '~> 4.2.0'
+gem 'tracker_api',    '~> 1.6'
+gem 'travis',         '~> 1.7.6'
 
-gem 'awesome_spawn'
-gem 'default_value_for'
-gem 'more_core_extensions', :require => 'more_core_extensions/all'
-gem 'rubocop', '>= 0.27.1'
-gem 'haml-lint', '~> 0.13.0'
+gem 'awesome_spawn',        '>= 1.4.1'
+gem 'default_value_for',    '>= 3.1.0'
+gem 'haml',                 '~> 5.1',    :require => false # force newer version of haml
+gem 'haml_lint',            '~> 0.35.0', :require => false
+gem 'manageiq-style',                    :require => false
+gem 'more_core_extensions', '~> 4.0.0',  :require => 'more_core_extensions/all'
+gem 'rugged',                            :require => false
+
+gem 'octokit', '~> 4.8.0', :require => false
+gem 'faraday', '~> 0.9.2'
+gem 'faraday-http-cache', '~> 2.0.0'
 
 group :development, :test do
   gem 'rspec'
@@ -51,13 +55,6 @@ group :development, :test do
 end
 
 group :test do
-  gem "factory_girl_rails"
-end
-
-group :issue_manager do
-  gem 'octokit',       '~> 3.8.0'
-  gem 'minigit',       '~> 0.0.4'
-
-  # Lock down dependency
-  gem 'faraday', '~> 0.9.1'
+  gem 'factory_bot_rails'
+  gem 'webmock'
 end

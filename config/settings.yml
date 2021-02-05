@@ -1,16 +1,33 @@
+# Service credentials
 bugzilla_credentials:
-  bugzilla_uri:
+  url:
   username:
   password:
 github_credentials:
   username:
   password:
-commit_monitor:
-  bugzilla_product:
-gemfile_checker:
-  pr_contacts: []
-  enabled_repos: []
-issue_manager:
-  repo_names: []
-travis_event:
-  enabled_repos: []
+influxdb_credentials:
+  database:
+  username:
+  password:
+pivotal_credentials:
+  token:
+
+# General settings
+bugzilla:
+  product:
+grafana:
+  url:
+labels:
+  unassignable: {}
+  unremovable: []
+
+# Worker settings
+diff_content_checker:
+  offenses: {}
+merge_target_titler:
+  included_repos: []
+path_based_labeler:
+  rules: {}
+travis_build_killer:
+  included_repos: []

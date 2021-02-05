@@ -1,12 +1,12 @@
-require 'stringio'
 require 'rubocop'
 require 'haml_lint'
 
 class CommitMonitorHandlers::CommitRange::RubocopChecker::MessageBuilder
+  include BranchWorkerMixin
+
   def initialize(results, branch)
-    @results  = results
-    @branch   = branch
-    @commits  = branch.commits_list
+    @results = results
+    @branch  = branch
   end
 
   def comments
@@ -16,17 +16,17 @@ class CommitMonitorHandlers::CommitRange::RubocopChecker::MessageBuilder
 
   private
 
-  attr_reader :results, :branch, :commits, :message_builder
+  attr_reader :results, :message_builder
 
-  SUCCESS_EMOJI = %w{:+1: :cookie: :star: :cake:}
+  SUCCESS_EMOJI = %w{:+1: :cookie: :star: :cake: :trophy:}
 
-  SEVERITY = {
-    "fatal"      => ":red_circle: **Fatal**",
-    "error"      => ":red_circle: **Error**",
-    "warning"    => ":red_circle: **Warn**",
-    "convention" => ":large_orange_diamond:",
-    "refactor"   => ":small_blue_diamond:",
-  }.freeze
+  SEVERITY_MAP = Hash.new(:unknown).merge(
+    "fatal"      => :error,
+    "error"      => :error,
+    "warning"    => :warn,
+    "convention" => :high,
+    "refactor"   => :low,
+  ).freeze
 
   COP_DOCUMENTATION_URI = File.join("http://rubydoc.info/gems/rubocop", RuboCop::Version.version)
   COP_URIS =
@@ -42,11 +42,7 @@ class CommitMonitorHandlers::CommitRange::RubocopChecker::MessageBuilder
   end
 
   def header
-    commit_range = [
-      branch.commit_uri_to(commits.first),
-      branch.commit_uri_to(commits.last),
-    ].uniq.join(" .. ")
-    header1 = "Checked #{"commit".pluralize(commits.length)} #{commit_range} with rubocop #{rubocop_version} and haml-lint #{hamllint_version}"
+    header1 = "Checked #{"commit".pluralize(commits.length)} #{commit_range_text} with ruby #{RUBY_VERSION}, rubocop #{rubocop_version}, haml-lint #{hamllint_version}, and yamllint #{yamllint_version}"
 
     file_count    = results.fetch_path("summary", "target_file_count").to_i
     offense_count = results.fetch_path("summary", "offense_count").to_i
@@ -60,72 +56,65 @@ class CommitMonitorHandlers::CommitRange::RubocopChecker::MessageBuilder
   end
 
   def build_comments
-    @message_builder = MiqToolsServices::Github::MessageBuilder.new(header, continuation_header)
+    @message_builder = GithubService::MessageBuilder.new(header, continuation_header)
     files.empty? ? write_success : write_offenses
   end
 
   def write_success
-    message_builder.write("Everything looks good. #{SUCCESS_EMOJI.sample}")
+    message_builder.write("Everything looks fine. #{SUCCESS_EMOJI.sample}")
   end
 
   def write_offenses
-    files.each do |f|
-      message_builder.write("\n**#{f["path"]}**")
-      message_builder.write_lines(offense_lines(f))
-    end
+    content = OffenseMessage.new
+    content.entries = offenses
+    message_builder.write("")
+    message_builder.write_lines(content.lines)
+  end
+
+  def offenses
+    files.collect do |f|
+      f["offenses"].collect do |o|
+        OffenseMessage::Entry.new(
+          SEVERITY_MAP[o["severity"]],
+          format_message(o),
+          f["path"],
+          format_locator(f, o)
+        )
+      end
+    end.flatten
   end
 
   def files
-    results["files"].select { |f| f["offenses"].any? }.sort_by { |f| f["path"] }
+    results["files"].select { |f| f["offenses"].any? }
   end
 
-  def offense_lines(file)
-    sorted_offense_records(file).collect do |o|
-      "- [ ] %s - %s, %s - %s - %s" % [
-        format_severity(o["severity"]),
-        format_line(o["location"]["line"], file["path"]),
-        format_column(o["location"]["column"]),
-        format_cop_name(o["cop_name"]),
-        o["message"]
-      ]
-    end
+  def format_message(offense)
+    [format_cop_name(offense["cop_name"]), offense["message"]].compact.join(" - ")
   end
 
-  def sorted_offense_records(file)
-    file["offenses"].sort_by do |o|
-      [
-        order_severity(o["severity"]),
-        o["location"]["line"],
-        o["location"]["column"],
-        o["cop_name"]
-      ]
-    end
+  def format_cop_name(cop_name)
+    COP_URIS[cop_name] || cop_name
   end
 
-  def order_severity(sev)
-    SEVERITY.keys.index(sev) || Float::INFINITY
+  def format_locator(file, offense)
+    [format_line(file, offense), format_column(offense)].compact.join(", ").presence
   end
 
-  def format_severity(sev)
-    SEVERITY[sev] || sev.capitalize[0, 5]
+  def format_line(file, offense)
+    line = offense.fetch_path("location", "line")
+    return nil unless line
+    uri = File.join(line_uri, "blob", commits.last, file["path"]) << "#L#{line}"
+    "[Line #{line}](#{uri})"
+  end
+
+  def format_column(offense)
+    column = offense.fetch_path("location", "column")
+    column && "Col #{column}"
   end
 
   # TODO: Don't reuse the commit_uri.  This should probably be its own URI.
   def line_uri
     branch.commit_uri.chomp("commit/$commit")
-  end
-
-  def format_line(line, path)
-    uri = File.join(line_uri, "blob", commits.last, path)
-    "[Line #{line}](#{uri}#L#{line})"
-  end
-
-  def format_column(column)
-    "Col #{column}"
-  end
-
-  def format_cop_name(cop_name)
-    COP_URIS[cop_name] || cop_name
   end
 
   def rubocop_version
@@ -134,5 +123,10 @@ class CommitMonitorHandlers::CommitRange::RubocopChecker::MessageBuilder
 
   def hamllint_version
     HamlLint::VERSION
+  end
+
+  def yamllint_version
+    _out, err, _ps = Open3.capture3("yamllint -v")
+    err.split.last
   end
 end

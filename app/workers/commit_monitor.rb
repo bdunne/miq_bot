@@ -2,11 +2,12 @@ require 'yaml'
 
 class CommitMonitor
   include Sidekiq::Worker
-  include Sidetiq::Schedulable
-  include MiqToolsServices::SidekiqWorkerMixin
-  sidekiq_options :queue => :miq_bot, :retry => false
+  sidekiq_options :queue => :miq_bot_glacial, :retry => false
 
+  include Sidetiq::Schedulable
   recurrence { hourly.minute_of_hour(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55) }
+
+  include SidekiqWorkerMixin
 
   # commit handlers expect to handle a specific commit at a time.
   #
@@ -21,7 +22,7 @@ class CommitMonitor
   #   to check the new commits, but as a group, since newer commits may fix
   #   issues in prior commits.
   def self.commit_range_handlers
-    @commit_range_handlers ||= handlers_for(:commit_range)
+    @commit_range_handlers ||= handlers_for(:commit_range).select { |h| !h.respond_to?(:perform_batch_async) }
   end
 
   # branch handlers expect to handle an entire branch at once.
@@ -32,75 +33,69 @@ class CommitMonitor
     @branch_handlers ||= handlers_for(:branch)
   end
 
+  # batch handlers expect to handle a batch of workers at once and will need
+  #   a wider range of information
+  #
+  # Example: A general commenter to GitHub for a number of issues
+  def self.batch_handlers
+    @batch_handlers ||= handlers_for(:commit_range).select { |h| h.respond_to?(:perform_batch_async) }
+  end
+
   def perform
     if !first_unique_worker?
       logger.info "#{self.class} is already running, skipping"
     else
-      process_branches
+      process_repos
     end
+  end
+
+  def process_repos
+    enabled_repos.includes(:branches).each { |repo| process_repo(repo) }
   end
 
   private
 
-  attr_reader :repo, :git, :branch, :new_commits, :all_commits, :statistics
+  attr_reader :repo, :branch, :new_commits, :all_commits, :statistics
 
-  def process_branches
-    CommitMonitorRepo.includes(:branches).each do |repo|
-      @statistics = {}
+  def process_repo(repo)
+    @statistics = {}
 
-      @repo = repo
-      repo.with_git_service do |git|
-        @git = git
+    @repo = repo
+    repo.git_fetch
 
-        # Sort PR branches after regular branches
-        sorted_branches = repo.branches.sort_by { |b| b.pull_request? ? 1 : -1 }
+    # Sort PR branches after regular branches
+    sorted_branches = repo.branches.sort_by { |b| b.pull_request? ? 1 : -1 }
 
-        sorted_branches.each do |branch|
-          @branch = branch
-          process_branch
-        end
-      end
+    sorted_branches.each do |branch|
+      @new_commits_details = nil
+      @branch = branch
+      process_branch
     end
   end
 
   def process_branch
     logger.info "Processing #{repo.name}/#{branch.name}"
-    update_branch
 
     @new_commits, @all_commits = detect_commits
-    statistics[branch.name] = {
-      :new_commits => new_commits,
-      :all_commits => all_commits
-    }
+
+    statistics[branch.name] = {:new_commits => new_commits} unless branch.pull_request?
+
     logger.info "Detected new commits #{new_commits}" if new_commits.any?
 
     save_branch_record
     process_handlers
   end
 
-  def update_branch
-    if branch.pull_request?
-      git.update_pr_branch(branch.name)
-    else
-      git.checkout(branch.name)
-      git.pull
-    end
-  end
-
-  def branch_mode
-    branch.pull_request? ? :pr : :regular
-  end
-
   def detect_commits
-    send("detect_commits_on_#{branch_mode}_branch")
+    send("detect_commits_on_#{branch.mode}_branch")
   end
 
   def detect_commits_on_regular_branch
-    return git.new_commits(branch.last_commit), nil
+    return branch.git_service.commit_ids_since(branch.last_commit), nil
   end
 
   def detect_commits_on_pr_branch
-    all        = git.new_commits(git.merge_base(branch.name, "master"), branch.name)
+    all        = branch.git_service.commit_ids_since(branch.git_service.merge_base)
     comparison = compare_commits_list(branch.commits_list, all)
     return comparison[:right_only], all
   end
@@ -117,15 +112,22 @@ class CommitMonitor
     {:same => same, :left_only => left_only, :right_only => right_only}
   end
 
+  def new_commits_details
+    @new_commits_details ||=
+      new_commits.each_with_object({}) do |commit, h|
+        h[commit] = branch.git_service.commit(commit).details_hash
+      end
+  end
+
   def save_branch_record
     attrs = {:last_checked_on => Time.now.utc}
     attrs[:last_commit] = new_commits.last if new_commits.any?
 
     if all_commits != branch.commits_list
-      attrs[:commits_list] = all_commits && all_commits.to_yaml # Rails, Y U NO serialize with update_columns?!
+      attrs[:commits_list] = all_commits
     end
 
-    # Update columns directly to avoid collisions wrt the serialized column issue
+    # Update columns directly to avoid collisions with other workers.  See: https://github.com/rails/rails/issues/8328
     branch.update_columns(attrs)
   end
 
@@ -143,7 +145,9 @@ class CommitMonitor
   private_class_method(:handlers_for)
 
   def filter_handlers(handlers)
-    handlers.select { |h| h.handled_branch_modes.include?(branch_mode) }
+    handlers.select do |h|
+      h.handled_branch_modes.include?(branch.mode) && h.enabled_for?(repo)
+    end
   end
 
   def commit_handlers
@@ -158,10 +162,15 @@ class CommitMonitor
     filter_handlers(self.class.branch_handlers)
   end
 
+  def batch_handlers
+    filter_handlers(self.class.batch_handlers)
+  end
+
   def process_handlers
     process_commit_handlers       if process_commit_handlers?
     process_commit_range_handlers if process_commit_range_handlers?
     process_branch_handlers       if process_branch_handlers?
+    process_batch_handlers        if process_batch_handlers?
   end
 
   def process_commit_handlers?
@@ -173,7 +182,11 @@ class CommitMonitor
   end
 
   def process_branch_handlers?
-    branch_handlers.any? && send("process_#{branch_mode}_branch_handlers?")
+    branch_handlers.any? && send("process_#{branch.mode}_branch_handlers?")
+  end
+
+  def process_batch_handlers?
+    batch_handlers.any? && new_commits.any?
   end
 
   def process_pr_branch_handlers?
@@ -186,12 +199,10 @@ class CommitMonitor
   end
 
   def process_commit_handlers
-    new_commits.each do |commit|
-      message = git.commit_message(commit)
-      files   = git.diff_details(commit).keys
+    new_commits_details.each do |commit, details|
       commit_handlers.each do |h|
-        logger.info("Queueing #{h.name} for commit #{commit} on branch #{branch.name}")
-        h.perform_async(branch.id, commit, "message" => message, "files" => files)
+        logger.info("Queueing #{h.name.split("::").last} for commit #{commit} on branch #{branch.name}")
+        h.perform_async(branch.id, commit, details)
       end
     end
   end
@@ -200,15 +211,22 @@ class CommitMonitor
     commit_range = [new_commits.first, new_commits.last].uniq.join("..")
 
     commit_range_handlers.each do |h|
-      logger.info("Queueing #{h.name} for commit range #{commit_range} on branch #{branch.name}")
+      logger.info("Queueing #{h.name.split("::").last} for commit range #{commit_range} on branch #{branch.name}")
       h.perform_async(branch.id, new_commits)
     end
   end
 
   def process_branch_handlers
     branch_handlers.each do |h|
-      logger.info("Queueing #{h.name} for branch #{branch.name}")
+      logger.info("Queueing #{h.name.split("::").last} for branch #{branch.name}")
       h.perform_async(branch.id)
+    end
+  end
+
+  def process_batch_handlers
+    batch_handlers.each do |h|
+      logger.info("Queueing #{h.name} for branch #{branch.name}")
+      h.perform_batch_async(branch.id, new_commits_details)
     end
   end
 end

@@ -1,4 +1,3 @@
-require File.expand_path('../preinitializer', __FILE__)
 require File.expand_path('../boot', __FILE__)
 
 require 'rails/all'
@@ -20,5 +19,13 @@ module MiqBot
     # The default locale is :en and all translations from config/locales/*.rb,yml are auto loaded.
     # config.i18n.load_path += Dir[Rails.root.join('my', 'locales', '*.{rb,yml}').to_s]
     # config.i18n.default_locale = :de
+
+    config.eager_load_paths << Rails.root.join("app/workers/concerns")
+    config.eager_load_paths << Rails.root.join("lib/github_service/concerns")
+    config.eager_load_paths << Rails.root.join("lib")
+
+    console do
+      TOPLEVEL_BINDING.eval('self').extend(ConsoleMethods)
+    end
   end
 end
